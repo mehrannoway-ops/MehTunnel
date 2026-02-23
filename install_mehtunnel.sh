@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # -----------------------------
-# MehTunnel Installer v1.0 (Stable)
+# MehTunnel Installer v1.0
 # -----------------------------
 
 REPO_USER="mehrannoway-ops"
@@ -15,12 +15,10 @@ PY_DST="${INSTALL_DIR}/${PY_FILE}"
 BIN="/usr/local/bin/mehtunnel"
 
 CLR_GREEN="\033[32m"; CLR_RED="\033[31m"; CLR_RESET="\033[0m"
-
 info() { echo -e "${CLR_GREEN}[*] $*${CLR_RESET}"; }
 err() { echo -e "${CLR_RED}[!] $*${CLR_RESET}"; exit 1; }
 ok() { echo -e "${CLR_GREEN}[+] $*${CLR_RESET}"; }
 
-# -----------------------------
 [[ "$EUID" -eq 0 ]] || err "Please run as root: sudo bash install_mehtunnel.sh"
 
 info "Updating package lists..."
@@ -30,24 +28,20 @@ apt-get update -y >/dev/null 2>&1 || true
 info "Installing dependencies..."
 apt-get install -y python3 curl >/dev/null 2>&1 || apt-get install -y python3 curl
 
-# -----------------------------
 info "Creating installation directory..."
 mkdir -p "$INSTALL_DIR"
 
-# -----------------------------
 info "Downloading MehTunnel..."
 curl -fsSL "$PY_URL" -o "$PY_DST" || err "Failed to download MehTunnel.py"
 chmod +x "$PY_DST"
 
-# -----------------------------
 info "Creating launcher command: mehtunnel"
 cat > "$BIN" <<EOF
 #!/usr/bin/env bash
-python3 "$PY_DST"
+python3 "$PY_DST" "\$@"
 EOF
 chmod +x "$BIN"
 
-# -----------------------------
 ok "Installation completed!"
 echo ""
 echo "Run MehTunnel using:"
