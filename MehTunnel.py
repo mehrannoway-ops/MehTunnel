@@ -9,7 +9,6 @@ SOCKBUF = 8*1024*1024
 BUF_COPY = 256*1024
 SYNC_INTERVAL = 3
 
-# --------- Auto pool sizing ----------
 def auto_pool_size(role="ir"):
     try:
         env_pool=int(os.environ.get("MEHTUNNEL_POOL","0"))
@@ -36,7 +35,6 @@ def auto_pool_size(role="ir"):
     pool=min(fd_based, ram_based)
     return max(100,min(pool,2000))
 
-# --------- Socket helpers ----------
 def tune_tcp(sock):
     try: sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY,1)
     except: pass
@@ -124,7 +122,7 @@ def ir_mode(bridge_port,sync_port,pool_size,auto_sync,manual_ports_csv):
             active[p]=True
         try:
             srv=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
-            srv.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR,1)
             srv.bind(("0.0.0.0",p))
             srv.listen(16384)
         except Exception as e:
@@ -180,20 +178,26 @@ def main():
     print("        MehTunnel Manager")
     print("================================")
     mode=input("Select mode (1=EU,2=IR): ").strip()
-    if mode not in ("1","2"):
-        print("Invalid selection."); sys.exit(1)
     if mode=="1":
+        iran_ip=input("EU IP (use Iran exit IP if needed): ")
+        bridge=int(input("Bridge port [4444]: ") or "4444")
+        sync=int(input("Sync port [5555]: ") or "5555")
+        pool=auto_pool_size("eu")
+        print(f"[AUTO] role=EU pool={pool}")
         print("Only IR mode supported for stable persistent tunnel.")
         sys.exit(0)
-    else:
+    elif mode=="2":
         bridge=int(input("IR -> Bridge port [4444]: ") or "4444")
         sync=int(input("Sync port [5555]: ") or "5555")
         yn=input("Auto-sync ports from EU? (y/n): ").lower() or "y"
         if yn=="y": auto_sync=True; manual_ports=""
         else: auto_sync=False; manual_ports=input("Manual ports CSV (80,443,...): ")
         pool=auto_pool_size("ir")
-        print(f"[AUTO] role=IR pool={pool} (override: MEHTUNNEL_POOL)")
+        print(f"[AUTO] role=IR pool={pool}")
         ir_mode(bridge,sync,pool,auto_sync,manual_ports)
+    else:
+        print("Invalid selection.")
+        sys.exit(1)
 
 if __name__=="__main__":
     main()
