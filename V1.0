@@ -1,0 +1,224 @@
+import asyncio
+import os
+import socket
+import struct
+import resource
+import logging
+import re
+import sys
+import time
+import subprocess
+
+# =========================
+# Logging
+# =========================
+logging.basicConfig(
+    level=logging.INFO,
+    format='[MehTunnel] %(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# =========================
+# Banner
+# =========================
+def print_banner(mode_name):
+    os.system('clear' if os.name == 'posix' else 'cls')
+    MAGENTA, CYAN, BOLD, END = "\033[95m", "\033[96m", "\033[1m", "\033[0m"
+    print(f"""
+{MAGENTA}{BOLD}██████╗ ███████╗██╗  ██╗████████╗██╗   ██╗███╗   ██╗
+██╔══██╗██╔════╝██║  ██║╚══██╔══╝██║   ██║████╗  ██║
+██████╔╝█████╗  ███████║   ██║   ██║   ██║██╔██╗ ██║
+██╔══██╗██╔══╝  ██╔══██║   ██║   ██║   ██║██║╚██╗██║
+██║  ██║███████╗██║  ██║   ██║   ╚██████╔╝██║ ╚████║
+╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝
+{CYAN}{BOLD}        MehTunnel v1.0 | Mode: {mode_name}
+{MAGENTA}{BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{END}
+""")
+
+# =========================
+# Constants
+# =========================
+BUFFER_SIZE = 1100
+CON_COUNT = 300
+AUTH_TOKEN = b"S3cr3t_T0k3n_123"
+
+HEALTH_PING = b"PING"
+HEALTH_PONG = b"PONG"
+HEALTH_INTERVAL = 15
+HEALTH_TIMEOUT = 5
+
+WATCHDOG_INTERVAL = 60
+MAX_FD_PERCENT = 90
+MAX_CONN = 5000
+
+# =========================
+# System Optimize
+# =========================
+def optimize_system():
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (1000000, 1000000))
+        logging.info("System limits optimized (NOFILE)")
+    except Exception as e:
+        logging.warning(f"RLIMIT error: {e}")
+
+def tune_socket(writer):
+    sock = writer.get_extra_info('socket')
+    if not sock:
+        return
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        if hasattr(socket, 'TCP_KEEPIDLE'):
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 10)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 3)
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+    except:
+        pass
+
+# =========================
+# Pipe + Health
+# =========================
+async def fast_pipe(reader, writer):
+    try:
+        while True:
+            data = await reader.read(BUFFER_SIZE)
+            if not data:
+                break
+
+            if data == HEALTH_PING:
+                writer.write(HEALTH_PONG)
+                await writer.drain()
+                continue
+
+            writer.write(data)
+            await writer.drain()
+    except:
+        pass
+
+async def run_bidirectional(r1, w1, r2, w2):
+    t1 = asyncio.create_task(fast_pipe(r1, w2))
+    t2 = asyncio.create_task(fast_pipe(r2, w1))
+    done, pending = await asyncio.wait([t1, t2], return_when=asyncio.FIRST_COMPLETED)
+    for p in pending:
+        p.cancel()
+
+async def health_check(reader, writer, name):
+    try:
+        while True:
+            await asyncio.sleep(HEALTH_INTERVAL)
+            writer.write(HEALTH_PING)
+            await writer.drain()
+            pong = await asyncio.wait_for(reader.readexactly(4), timeout=HEALTH_TIMEOUT)
+            if pong != HEALTH_PONG:
+                raise ConnectionError
+    except:
+        logging.warning(f"Health failed: {name}")
+        writer.close()
+
+# =========================
+# Watchdog (Internal)
+# =========================
+async def watchdog():
+    pid = os.getpid()
+    while True:
+        await asyncio.sleep(WATCHDOG_INTERVAL)
+        try:
+            used_fd = len(os.listdir(f"/proc/{pid}/fd"))
+            max_fd = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+            fd_percent = used_fd * 100 / max_fd
+
+            conn = int(subprocess.getoutput("ss -tn state established | wc -l"))
+
+            if fd_percent > MAX_FD_PERCENT or conn > MAX_CONN:
+                logging.error("Watchdog triggered restart")
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+
+        except Exception as e:
+            logging.warning(f"Watchdog error: {e}")
+
+# =========================
+# EUROPE
+# =========================
+async def start_europe():
+    print_banner("EUROPE")
+    iran_ip = os.getenv("IRAN_IP")
+    bridge_p = int(os.getenv("BRIDGE_PORT", "4444"))
+
+    async def create_reverse():
+        retry = 1
+        while True:
+            try:
+                r, w = await asyncio.open_connection(iran_ip, bridge_p)
+                tune_socket(w)
+                w.write(AUTH_TOKEN)
+                await w.drain()
+
+                header = await r.readexactly(2)
+                port = struct.unpack("!H", header)[0]
+
+                rr, rw = await asyncio.open_connection("127.0.0.1", port)
+                tune_socket(rw)
+
+                logging.info("Reverse connected")
+
+                await asyncio.gather(
+                    run_bidirectional(r, w, rr, rw),
+                    health_check(r, w, "EU→IR")
+                )
+
+            except Exception as e:
+                await asyncio.sleep(retry)
+                retry = min(retry * 2, 30)
+
+    tasks = [asyncio.create_task(create_reverse()) for _ in range(CON_COUNT)]
+    tasks.append(asyncio.create_task(watchdog()))
+    await asyncio.gather(*tasks)
+
+# =========================
+# IRAN
+# =========================
+async def start_iran():
+    print_banner("IRAN")
+    bridge_p = int(os.getenv("BRIDGE_PORT", "4444"))
+    pool = asyncio.LifoQueue()
+
+    async def handle_bridge(r, w):
+        tune_socket(w)
+        try:
+            token = await r.readexactly(len(AUTH_TOKEN))
+            if token == AUTH_TOKEN:
+                await pool.put((r, w))
+        except:
+            w.close()
+
+    async def handle_user(ur, uw):
+        try:
+            er, ew = await pool.get()
+            ew.write(struct.pack("!H", 443))
+            await ew.drain()
+            await run_bidirectional(ur, uw, er, ew)
+        finally:
+            uw.close()
+            ew.close()
+
+    server = await asyncio.start_server(handle_bridge, "0.0.0.0", bridge_p)
+    asyncio.create_task(watchdog())
+    await server.serve_forever()
+
+# =========================
+# MAIN
+# =========================
+if __name__ == "__main__":
+    optimize_system()
+    mode = os.getenv("RUN_MODE", "").upper()
+
+    try:
+        if mode == "EUROPE":
+            asyncio.run(start_europe())
+        elif mode == "IRAN":
+            asyncio.run(start_iran())
+        else:
+            logging.error("RUN_MODE invalid")
+    except KeyboardInterrupt:
+        logging.info("Exit")
