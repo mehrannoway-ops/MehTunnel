@@ -1,100 +1,59 @@
 #!/usr/bin/env python3
-import sys
-import os
+import os, sys, subprocess, time
 
-def interactive_menu():
-    print("================================")
-    print("        MehTunnel Manager")
-    print("================================")
-
-    mode = input("Select mode (1=EU,2=IR): ").strip()
-
-    if mode == "1":
-        iran_ip = input("Iran IP: ").strip()
-        bridge = input("Bridge port [4444]: ").strip() or "4444"
-        sync = input("Sync port [5555]: ").strip() or "5555"
-        create_service("EU", iran_ip, bridge, sync)
-
-    elif mode == "2":
-        bridge = input("Bridge port [4444]: ").strip() or "4444"
-        sync = input("Sync port [5555]: ").strip() or "5555"
-        auto = input("Auto-sync ports? (y/n): ").lower()
-        ports = ""
-        if auto == "n":
-            ports = input("Manual ports CSV: ")
-        create_service("IR", "", bridge, sync, auto, ports)
-
-    else:
-        print("Invalid option")
-        sys.exit(1)
-
-
-def create_service(mode, ip, bridge, sync, auto="y", ports=""):
-    name = f"mehtunnel-{mode.lower()}"
-    service = f"""[Unit]
-Description=MehTunnel {mode}
+SERVICE_TEMPLATE = """
+[Unit]
+Description=MehTunnel {mode} Service
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/mehtunnel/MehTunnel.py RUN {mode} {ip} {bridge} {sync} {auto} {ports}
+ExecStart=/usr/bin/python3 /opt/mehtunnel/MehTunnel.py --service {mode} --ip {ip} --bridge {bridge} --sync {sync} --ports {ports}
 Restart=always
-RestartSec=3
-LimitNOFILE=1000000
+RestartSec=5
+User=root
 
 [Install]
 WantedBy=multi-user.target
 """
 
-    path = f"/etc/systemd/system/{name}.service"
-    with open(path, "w") as f:
-        f.write(service)
-
-    os.system("systemctl daemon-reload")
-    os.system(f"systemctl enable {name}")
-    os.system(f"systemctl start {name}")
-
-    print(f"\n✅ Service {name} created and started")
+def create_service(mode, ip, bridge, sync, ports):
+    service_name = f"mehtunnel-{mode.lower()}"
+    service_file = f"/etc/systemd/system/{service_name}.service"
+    with open(service_file, "w") as f:
+        f.write(SERVICE_TEMPLATE.format(mode=mode.upper(), ip=ip, bridge=bridge, sync=sync, ports=ports))
+    subprocess.run(["systemctl", "daemon-reload"])
+    subprocess.run(["systemctl", "enable", "--now", service_name])
+    print(f"\n✅ Service {service_name} created and started")
     print("You can safely close the terminal. The tunnel will keep running.")
 
-
-def run_tunnel(args):
-    """
-    این تابع فقط جایگزین واقعی اجرای تانل هست.
-    باید کد فعلی تانل EU/IR رو اینجا بیاری.
-    برای نمونه، فقط چاپ می‌کنیم.
-    """
-    print("Running MehTunnel with args:", args)
-    mode = args[0]
-    iran_ip = args[1] if len(args) > 1 else ""
-    bridge = args[2] if len(args) > 2 else ""
-    sync = args[3] if len(args) > 3 else ""
-    auto = args[4] if len(args) > 4 else "y"
-    ports = args[5] if len(args) > 5 else ""
-
-    print(f"Mode={mode} | IR={iran_ip} | Bridge={bridge} | Sync={sync} | AutoSync={auto} | Ports={ports}")
-    print("🚀 MehTunnel is running... (simulation)")
-
-    # اینجا باید حلقه اصلی تانل باشه
-    import time
-    try:
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
-        print("\n🔹 MehTunnel stopped manually")
-
+def run_mode(mode):
+    ip = input("Iran IP: ") if mode=="IR" else input("EU IP: ")
+    bridge = input("Bridge port [4444]: ") or "4444"
+    sync = input("Sync port [5555]: ") or "5555"
+    ports = input("Manual ports CSV (80,443,...): ") or "80,443"
+    create_service(mode, ip, bridge, sync, ports)
 
 def main():
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--interactive":
-            interactive_menu()
-        elif sys.argv[1] == "RUN":
-            run_tunnel(sys.argv[2:])
-        else:
-            print("Unknown option")
+    if "--service" in sys.argv:
+        # اجرا از طریق systemd
+        idx = sys.argv.index("--service")
+        mode = sys.argv[idx+1]
+        ip = sys.argv[sys.argv.index("--ip")+1]
+        bridge = sys.argv[sys.argv.index("--bridge")+1]
+        sync = sys.argv[sys.argv.index("--sync")+1]
+        ports = sys.argv[sys.argv.index("--ports")+1]
+        # اینجا میتونی کد تانل واقعی خودت رو بذاری
+        print(f"[{mode}] Running | IP={ip} bridge={bridge} sync={sync} ports={ports}")
+        while True:
+            time.sleep(3600)
     else:
-        interactive_menu()
+        print("================================")
+        print("        MehTunnel Manager")
+        print("================================")
+        mode = input("Select mode (1=EU,2=IR): ")
+        if mode=="1": run_mode("EU")
+        else: run_mode("IR")
 
-
-if __name__ == "__main__":
+if __name__=="__main__":
     main()
