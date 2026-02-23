@@ -1,37 +1,46 @@
 #!/bin/bash
-set -e
 
-echo "🔹 ساخت دایرکتوری /opt/mehtunnel..."
-sudo mkdir -p /opt/mehtunnel
-cd /opt/mehtunnel
+INSTALL_DIR="/opt/mehtunnel"
+PY_FILE="$INSTALL_DIR/MehTunnel.py"
 
-echo "🔹 دانلود MehTunnel.py جدید..."
-sudo curl -L -o MehTunnel.py https://raw.githubusercontent.com/your-repo/MehTunnel/main/MehTunnel.py
+# ایجاد مسیر نصب
+mkdir -p $INSTALL_DIR
 
-echo "🔹 اعمال دسترسی اجرا..."
-sudo chmod +x MehTunnel.py
+# دانلود MehTunnel.py
+echo "🔹 دانلود MehTunnel..."
+curl -Ls https://raw.githubusercontent.com/mehrannoway-ops/MehTunnel/main/MehTunnel.py -o $PY_FILE
+chmod +x $PY_FILE
 
-echo "🔹 ایجاد سرویس systemd برای MehTunnel..."
-sudo tee /etc/systemd/system/mehtunnel.service > /dev/null <<EOL
+# گرفتن ورودی کاربر
+read -p "انتخاب مد (EU/IR): " MODE
+read -p "IP مورد نظر: " IP
+read -p "Bridge port: " BRIDGE
+read -p "Sync port: " SYNC
+read -p "Pool: " POOL
+
+# ساخت سرویس systemd با مقادیر کاربر
+SERVICE_FILE="/etc/systemd/system/mehtunnel-${MODE,,}.service"
+
+echo "🔹 ساخت سرویس systemd..."
+cat > $SERVICE_FILE <<EOF
 [Unit]
-Description=MehTunnel Auto Service
+Description=MehTunnel ${MODE} Service
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /opt/mehtunnel/MehTunnel.py --auto
+ExecStart=/usr/bin/python3 $PY_FILE $MODE $IP $BRIDGE $SYNC $POOL
 Restart=always
-User=root
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-EOL
+EOF
 
-echo "🔹 بارگذاری سرویس و فعال‌سازی..."
-sudo systemctl daemon-reload
-sudo systemctl enable mehtunnel
-sudo systemctl start mehtunnel
+# فعال کردن سرویس
+systemctl daemon-reload
+systemctl enable "mehtunnel-${MODE,,}"
 
-echo "✅ نصب کامل شد! تانل هم اکنون فعال است."
-echo "وضعیت سرویس:"
-sudo systemctl status mehtunnel --no-pager
+echo "✅ نصب و ساخت سرویس کامل شد!"
+echo "برای اجرای سرویس: sudo systemctl start mehtunnel-${MODE,,}"
+echo "و برای مشاهده لاگ: sudo journalctl -u mehtunnel-${MODE,,} -f"
