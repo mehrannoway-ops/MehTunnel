@@ -1,33 +1,52 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-PY_FILE="/opt/mehtunnel/MehTunnel.py"
-BIN_FILE="/usr/local/bin/mehtunnel"
+# -----------------------------
+# MehTunnel Installer v1.0
+# -----------------------------
 
-echo "[*] Updating package lists..."
-apt-get update -y
+REPO_USER="mehrannoway-ops"
+REPO_NAME="MehTunnel"
+PY_FILE="MehTunnel.py"
+PY_URL="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${PY_FILE}"
 
-echo "[*] Installing dependencies..."
-apt-get install -y python3 python3-pip curl
+INSTALL_DIR="/opt/mehtunnel"
+PY_DST="${INSTALL_DIR}/${PY_FILE}"
+BIN="/usr/local/bin/mehtunnel"
 
-echo "[*] Creating installation directory..."
-mkdir -p /opt/mehtunnel
+# Colors
+CLR_GREEN="\033[32m"; CLR_RED="\033[31m"; CLR_RESET="\033[0m"
+info() { echo -e "${CLR_GREEN}[*] $*${CLR_RESET}"; }
+err() { echo -e "${CLR_RED}[!] $*${CLR_RESET}"; exit 1; }
+ok() { echo -e "${CLR_GREEN}[+] $*${CLR_RESET}"; }
 
-echo "[*] Downloading MehTunnel..."
-curl -Ls https://raw.githubusercontent.com/mehrannoway-ops/MehTunnel/main/MehTunnel.py -o $PY_FILE
+# Root check
+[[ "$EUID" -eq 0 ]] || err "Please run as root: sudo bash install_mehtunnel.sh"
 
-echo "[*] Setting execute permission..."
-chmod +x $PY_FILE
+info "Updating package lists..."
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y >/dev/null 2>&1 || true
 
-echo "[*] Creating launcher command: mehtunnel"
-cat > $BIN_FILE <<EOF
+info "Installing dependencies..."
+apt-get install -y python3 curl >/dev/null 2>&1 || apt-get install -y python3 curl
+
+info "Creating installation directory..."
+mkdir -p "$INSTALL_DIR"
+
+info "Downloading MehTunnel..."
+curl -fsSL "$PY_URL" -o "$PY_DST" || err "Failed to download MehTunnel.py"
+chmod +x "$PY_DST"
+
+info "Creating launcher command: mehtunnel"
+cat > "$BIN" <<EOF
 #!/usr/bin/env bash
-python3 "/opt/mehtunnel/MehTunnel.py" "\$@"
+# MehTunnel launcher with auto-service
+python3 "$PY_DST"
 EOF
+chmod +x "$BIN"
 
-chmod +x $BIN_FILE
-
-echo "[+] Installation completed!"
+ok "Installation completed!"
 echo ""
 echo "Run MehTunnel using:"
 echo "sudo mehtunnel"
+echo ""
