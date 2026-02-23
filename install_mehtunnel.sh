@@ -1,36 +1,104 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="https://raw.githubusercontent.com/mehrannoway-ops/MehTunnel/main"
-PY_URL="$REPO/MehTunnel.py"
-BIN="/usr/local/bin/mehtunnel"
-PY_DST="/opt/mehtunnel/MehTunnel.py"
+# ----------------------------
+# MehTunnel Installer + systemd
+# ----------------------------
 
+REPO="https://raw.githubusercontent.com/your-github/MehTunnel/main"
+PY_URL="$REPO/MehTunnel.py"
+
+INSTALL_DIR="/opt/mehtunnel"
+PY_DST="$INSTALL_DIR/MehTunnel.py"
+BIN="/usr/local/bin/mehtunnel"
+
+# --------- helpers ----------
+err() { echo "[!] $*" >&2; exit 1; }
 info() { echo "[*] $*"; }
 ok() { echo "[+] $*"; }
-err() { echo "[!] $*" >&2; exit 1; }
 
-# Root check
-[[ "$(id -u)" -eq 0 ]] || err "Run as root: sudo bash install_mehtunnel.sh"
+need_root(){ [[ "$(id -u)" == "0" ]] || { err "Run as root"; }; }
+have(){ command -v "$1" >/dev/null 2>&1; }
 
-info "Updating packages..."
-apt-get update -y >/dev/null 2>&1 || true
-apt-get install -y python3 curl >/dev/null 2>&1 || true
+# --------- install deps ----------
+install_deps(){
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y >/dev/null 2>&1 || true
+    for pkg in python3 curl screen; do
+        dpkg -s $pkg >/dev/null 2>&1 || apt-get install -y $pkg >/dev/null 2>&1
+    done
+}
 
-tmp_dir="$(mktemp -d)"
-cleanup() { rm -rf "$tmp_dir"; }
-trap cleanup EXIT
+# --------- fetch python core ----------
+fetch_core(){
+    mkdir -p "$INSTALL_DIR"
+    info "Downloading MehTunnel core..."
+    curl -fsSL "$PY_URL" -o "$PY_DST" || err "Failed to download MehTunnel.py"
+    chmod +x "$PY_DST"
+}
 
-info "Downloading MehTunnel core..."
-curl -fsSL "$PY_URL" -o "$tmp_dir/MehTunnel.py" || err "Download failed"
-mkdir -p "$(dirname "$PY_DST")"
-install -m 0755 "$tmp_dir/MehTunnel.py" "$PY_DST"
-
-ok "Installing launcher command: $BIN"
-cat > "$BIN" <<EOF
+# --------- create CLI shortcut ----------
+install_bin(){
+    cat > "$BIN" <<EOF
 #!/usr/bin/env bash
-sudo python3 "$PY_DST" "\$@"
+python3 "$PY_DST" "\$@"
 EOF
-chmod +x "$BIN"
+    chmod +x "$BIN"
+    ok "Installed CLI: $BIN"
+}
 
-ok "Installation complete! Run with: sudo mehtunnel"
+# --------- create systemd service ----------
+create_service(){
+    read -p "Select mode (1=EU,2=IR): " MODE
+    [[ "$MODE" == "1" ]] && ROLE="eu" || ROLE="ir"
+
+    read -p "Bridge port [4444]: " BRIDGE
+    BRIDGE=${BRIDGE:-4444}
+
+    read -p "Sync port [5555]: " SYNC
+    SYNC=${SYNC:-5555}
+
+    if [[ "$ROLE" == "eu" ]]; then
+        read -p "Iran IP: " IRAN_IP
+        SRVC_NAME="mehtunnel-eu"
+        CMD="python3 $PY_DST --mode eu --iran-ip $IRAN_IP --bridge $BRIDGE --sync $SYNC"
+    else
+        SRVC_NAME="mehtunnel-ir"
+        echo "IR mode will auto-sync from EU"
+        CMD="python3 $PY_DST --mode ir --bridge $BRIDGE --sync $SYNC --auto-sync"
+    fi
+
+    info "Creating systemd service: $SRVC_NAME"
+    SERVICE_PATH="/etc/systemd/system/$SRVC_NAME.service"
+    cat > "$SERVICE_PATH" <<EOF
+[Unit]
+Description=MehTunnel $ROLE Tunnel
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$CMD
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable "$SRVC_NAME"
+    systemctl start "$SRVC_NAME"
+    ok "Service $SRVC_NAME started. It will stay active after terminal closes."
+}
+
+# ---------------- main ----------------
+need_root
+install_deps
+fetch_core
+install_bin
+create_service
+
+echo ""
+ok "MehTunnel installation completed!"
+echo "Run manually: sudo $BIN"
+echo "Or manage service with: sudo systemctl [start|stop|status] $SRVC_NAME"
