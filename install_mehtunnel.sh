@@ -1,50 +1,19 @@
-#!/usr/bin/env bash
-set -euo pipefail
+root@ubuntu-4gb-nbg1-1:~# sudo bash install_mehtunnel.sh
+sudo mehtunnel
+[*] Updating package lists...
+[*] Installing dependencies...
+[*] Creating installation directory...
+[*] Downloading MehTunnel...
+[*] Creating launcher command: mehtunnel
+[+] Installation completed!
 
-# ----------------------------------------
-# MehTunnel Installer v2.0 (IR+EU persistent)
-# ----------------------------------------
+Run MehTunnel using:
+sudo mehtunnel
 
-REPO_USER="mehrannoway-ops"
-REPO_NAME="MehTunnel"
-PY_FILE="MehTunnel.py"
-PY_URL="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${PY_FILE}"
 
-INSTALL_DIR="/opt/mehtunnel"
-PY_DST="${INSTALL_DIR}/${PY_FILE}"
-BIN="/usr/local/bin/mehtunnel"
-
-# Colors
-CLR_GREEN="\033[32m"; CLR_RED="\033[31m"; CLR_RESET="\033[0m"
-info() { echo -e "${CLR_GREEN}[*] $*${CLR_RESET}"; }
-err() { echo -e "${CLR_RED}[!] $*${CLR_RESET}"; exit 1; }
-ok() { echo -e "${CLR_GREEN}[+] $*${CLR_RESET}"; }
-
-[[ "$EUID" -eq 0 ]] || err "Please run as root: sudo bash install_mehtunnel.sh"
-
-info "Updating packages..."
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y >/dev/null 2>&1 || true
-
-info "Installing dependencies..."
-apt-get install -y python3 curl >/dev/null 2>&1 || apt-get install -y python3 curl
-
-info "Creating installation directory..."
-mkdir -p "$INSTALL_DIR"
-
-info "Downloading MehTunnel..."
-curl -fsSL "$PY_URL" -o "$PY_DST" || err "Failed to download MehTunnel.py"
-chmod +x "$PY_DST"
-
-info "Creating launcher command: mehtunnel"
-cat > "$BIN" <<EOF
-#!/usr/bin/env bash
-python3 "$PY_DST" "\$@"
-EOF
-chmod +x "$BIN"
-
-ok "Installation completed!"
-echo ""
-echo "Run MehTunnel using:"
-echo "sudo mehtunnel"
-echo ""
+================================
+        MehTunnel Manager
+================================
+Select mode (1=EU,2=IR): 1
+Only IR mode supported for stable persistent tunnel.
+root@ubuntu-4gb-nbg1-1:~# 
