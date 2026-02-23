@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # -----------------------------
-# MehTunnel Installer v1.0
+# MehTunnel Installer v2.0
 # -----------------------------
 
 REPO_USER="mehrannoway-ops"
@@ -15,11 +15,13 @@ PY_DST="${INSTALL_DIR}/${PY_FILE}"
 BIN="/usr/local/bin/mehtunnel"
 
 CLR_GREEN="\033[32m"; CLR_RED="\033[31m"; CLR_RESET="\033[0m"
+
 info() { echo -e "${CLR_GREEN}[*] $*${CLR_RESET}"; }
 err() { echo -e "${CLR_RED}[!] $*${CLR_RESET}"; exit 1; }
 ok() { echo -e "${CLR_GREEN}[+] $*${CLR_RESET}"; }
 
-[[ "$EUID" -eq 0 ]] || err "Please run as root: sudo bash install_mehtunnel.sh"
+# Root check
+[[ "$EUID" -eq 0 ]] || err "Run as root: sudo bash install_mehtunnel.sh"
 
 info "Updating package lists..."
 export DEBIAN_FRONTEND=noninteractive
@@ -31,7 +33,7 @@ apt-get install -y python3 curl >/dev/null 2>&1 || apt-get install -y python3 cu
 info "Creating installation directory..."
 mkdir -p "$INSTALL_DIR"
 
-info "Downloading MehTunnel..."
+info "Downloading MehTunnel.py..."
 curl -fsSL "$PY_URL" -o "$PY_DST" || err "Failed to download MehTunnel.py"
 chmod +x "$PY_DST"
 
