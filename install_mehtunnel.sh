@@ -1,102 +1,108 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ----------------------
 APP_NAME="MehTunnel"
-PY_URL="https://raw.githubusercontent.com/mehrannoway-ops/MehTunnel/MehTunnel.py/main"
-PY_DST="/opt/mehtunnel/MehTunnel.py"
-BIN="/usr/local/bin/mehtunnel"
+REPO="https://raw.githubusercontent.com/mehrannoway-ops/MehTunnel/main"
+PY_URL="$REPO/MehTunnel.py"
+MEH_DST="/opt/mehtunnel/MehTunnel.py"
+SERVICE_DIR="/etc/systemd/system"
 
-# Check root
-if [[ "$EUID" -ne 0 ]]; then
-  echo "Please run as root: sudo bash $0"
-  exit 1
-fi
+# ---------- رنگ‌ها ----------
+RED="\033[31m"; GREEN="\033[32m"; CYAN="\033[36m"; RESET="\033[0m"
 
-# Install dependencies
+echo -e "${CYAN}[*] $APP_NAME Installer${RESET}"
+
+# ---------- نصب پیش‌نیازها ----------
+echo -e "${CYAN}[*] Installing dependencies...${RESET}"
 apt-get update -y >/dev/null
-apt-get install -y python3 curl systemd >/dev/null
+apt-get install -y python3 curl >/dev/null
 
-mkdir -p "$(dirname "$PY_DST")"
+# ---------- دانلود MehTunnel.py ----------
+mkdir -p "$(dirname $MEH_DST)"
+echo -e "${CYAN}[*] Downloading MehTunnel.py...${RESET}"
+curl -fsSL "$PY_URL" -o "$MEH_DST"
+chmod +x "$MEH_DST"
 
-# Download MehTunnel.py
-echo "📥 Downloading MehTunnel.py..."
-curl -fsSL "$PY_URL" -o "$PY_DST" || { echo "Failed to download MehTunnel.py"; exit 1; }
-chmod +x "$PY_DST"
+# ---------- گرفتن کانفیگ ----------
+echo -e "${CYAN}Select mode:${RESET} 1) EU  2) IR"
+read -rp "Mode (1/2): " MODE
 
-# Create executable wrapper
-cat > "$BIN" <<'EOF'
-#!/usr/bin/env bash
-python3 /opt/mehtunnel/MehTunnel.py
-EOF
-chmod +x "$BIN"
+if [[ "$MODE" == "1" ]]; then
+    read -rp "Iran IP: " IRAN_IP
+    read -rp "Bridge port [4444]: " BRIDGE
+    BRIDGE=${BRIDGE:-4444}
+    read -rp "Sync port [5555]: " SYNC
+    SYNC=${SYNC:-5555}
 
-echo "⚙️  MehTunnel installed at $BIN"
+    SERVICE="$SERVICE_DIR/mehtunnel-eu.service"
 
-# Ask user for configuration
-echo "Select server to install:"
-select MODE in "EU" "IR"; do
-    [[ -n "$MODE" ]] && break
-done
-
-read -rp "Bridge port [4444]: " BRIDGE_PORT
-BRIDGE_PORT=${BRIDGE_PORT:-4444}
-
-read -rp "Sync port [5555]: " SYNC_PORT
-SYNC_PORT=${SYNC_PORT:-5555}
-
-if [[ "$MODE" == "EU" ]]; then
-    read -rp "Iran server IP: " IRAN_IP
-fi
-
-if [[ "$MODE" == "IR" ]]; then
-    read -rp "Auto-sync ports from EU? (y/n): " AUTO_SYNC
-    if [[ "${AUTO_SYNC,,}" != "y" ]]; then
-        read -rp "Manual ports CSV (e.g. 80,443,2083): " MANUAL_PORTS
-    fi
-fi
-
-SERVICE_NAME="mehtunnel-${MODE,,}"
-
-# Create systemd service
-cat > "/etc/systemd/system/$SERVICE_NAME.service" <<EOF
+    cat > "$SERVICE" <<EOF
 [Unit]
-Description=MehTunnel Service (${MODE})
+Description=MehTunnel EU Service
 After=network.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/root
-Environment="BRIDGE_PORT=$BRIDGE_PORT"
-Environment="SYNC_PORT=$SYNC_PORT"
+ExecStart=/usr/bin/python3 $MEH_DST <<EOF
+1
+$IRAN_IP
+$BRIDGE
+$SYNC
 EOF
-
-if [[ "$MODE" == "EU" ]]; then
-    cat >> "/etc/systemd/system/$SERVICE_NAME.service" <<EOF
-Environment="IRAN_IP=$IRAN_IP"
-Environment="RUN_MODE=EU"
-EOF
-else
-    cat >> "/etc/systemd/system/$SERVICE_NAME.service" <<EOF
-Environment="RUN_MODE=IR"
-Environment="IS_AUTO=${AUTO_SYNC,,}"
-Environment="MANUAL_PORTS=${MANUAL_PORTS:-}"
-EOF
-fi
-
-cat >> "/etc/systemd/system/$SERVICE_NAME.service" <<'EOF'
-ExecStart=/usr/bin/python3 /opt/mehtunnel/MehTunnel.py
 Restart=always
 RestartSec=3
-LimitNOFILE=1000000
+User=root
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Enable and start
-systemctl daemon-reload
-systemctl enable --now "$SERVICE_NAME"
+    systemctl daemon-reload
+    systemctl enable mehtunnel-eu
+    systemctl start mehtunnel-eu
+    echo -e "${GREEN}[+] MehTunnel EU service created and started!${RESET}"
+    echo "Logs: journalctl -u mehtunnel-eu -f"
 
-echo "✅ Service $SERVICE_NAME created and started."
-echo "View logs: journalctl -u $SERVICE_NAME -f"
+else
+    read -rp "Bridge port [4444]: " BRIDGE
+    BRIDGE=${BRIDGE:-4444}
+    read -rp "Sync port [5555]: " SYNC
+    SYNC=${SYNC:-5555}
+    read -rp "Auto-sync ports from EU? (y/n): " AUTOSYNC
+    if [[ "${AUTOSYNC,,}" == "n" ]]; then
+        read -rp "Manual ports CSV (e.g., 80,443): " PORTS
+    else
+        PORTS=""
+    fi
+
+    SERVICE="$SERVICE_DIR/mehtunnel-ir.service"
+
+    cat > "$SERVICE" <<EOF
+[Unit]
+Description=MehTunnel IR Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 $MEH_DST <<EOF
+2
+$BRIDGE
+$SYNC
+$( [[ "${AUTOSYNC,,}" == "y" ]] && echo "y" || echo "n" )
+$PORTS
+EOF
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable mehtunnel-ir
+    systemctl start mehtunnel-ir
+    echo -e "${GREEN}[+] MehTunnel IR service created and started!${RESET}"
+    echo "Logs: journalctl -u mehtunnel-ir -f"
+fi
