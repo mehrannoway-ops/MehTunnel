@@ -1,45 +1,64 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="https://raw.githubusercontent.com/mehrannoway-ops/MehTunnel/main"
+# -----------------------------
+# MehTunnel Installer v1.0
+# -----------------------------
+
+# GitHub URLs
+REPO_USER="mehrannoway-ops"
+REPO_NAME="MehTunnel"
+PY_FILE="MehTunnel.py"
+PY_URL="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${PY_FILE}"
+
+# Installation paths
+INSTALL_DIR="/opt/mehtunnel"
+PY_DST="${INSTALL_DIR}/${PY_FILE}"
 BIN="/usr/local/bin/mehtunnel"
-PY_DST="/opt/mehtunnel/MehTunnel.py"
 
-info(){ echo "[*] $*"; }
-ok(){ echo "[+] $*"; }
-err(){ echo "[!] $*"; exit 1; }
+# Colors
+CLR_GREEN="\033[32m"; CLR_RED="\033[31m"; CLR_RESET="\033[0m"
 
-# root check
-[[ "$(id -u)" == "0" ]] || err "Run as root: sudo bash install_mehtunnel.sh"
+# -----------------------------
+info() { echo -e "${CLR_GREEN}[*] $*${CLR_RESET}"; }
+err() { echo -e "${CLR_RED}[!] $*${CLR_RESET}"; exit 1; }
+ok() { echo -e "${CLR_GREEN}[+] $*${CLR_RESET}"; }
 
-export DEBIAN_FRONTEND=noninteractive
+# -----------------------------
+# Root check
+[[ "$EUID" -eq 0 ]] || err "Please run as root: sudo bash install_mehtunnel.sh"
 
 info "Updating package lists..."
-apt-get update -y >/dev/null 2>&1 || apt-get update >/dev/null 2>&1
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y >/dev/null 2>&1 || true
 
-# Install dependencies
-DEPS=(python3 screen curl iproute2 ca-certificates)
 info "Installing dependencies..."
-apt-get install -y "${DEPS[@]}" >/dev/null 2>&1 || apt-get install -y "${DEPS[@]}"
+apt-get install -y python3 curl >/dev/null 2>&1 || apt-get install -y python3 curl
 
-tmpdir=$(mktemp -d)
-cleanup(){ rm -rf "$tmpdir"; }
-trap cleanup EXIT
+# -----------------------------
+# Prepare directories
+info "Creating installation directory..."
+mkdir -p "$INSTALL_DIR"
 
-info "Downloading MehTunnel manager..."
-curl -fsSL "$REPO/install_mehtunnel.sh" -o "$tmpdir/mehtunnel.sh" || err "Failed to download manager"
+# -----------------------------
+# Download MehTunnel.py
+info "Downloading MehTunnel..."
+curl -fsSL "$PY_URL" -o "$PY_DST" || err "Failed to download MehTunnel.py"
+chmod +x "$PY_DST"
 
-info "Downloading MehTunnel core..."
-curl -fsSL "$REPO/MehTunnel.py" -o "$tmpdir/MehTunnel.py" || err "Failed to download core"
+# -----------------------------
+# Create launcher script
+info "Creating launcher command: mehtunnel"
+cat > "$BIN" <<EOF
+#!/usr/bin/env bash
+# MehTunnel launcher
+python3 "$PY_DST"
+EOF
+chmod +x "$BIN"
 
-[[ -s "$tmpdir/mehtunnel.sh" ]] || err "Manager download is empty"
-[[ -s "$tmpdir/MehTunnel.py" ]] || err "Core download is empty"
-
-install -m 0755 "$tmpdir/mehtunnel.sh" "$BIN"
-mkdir -p "$(dirname "$PY_DST")"
-install -m 0755 "$tmpdir/MehTunnel.py" "$PY_DST"
-
-echo ""
+# -----------------------------
 ok "Installation completed!"
-echo "Run MehTunnel with:"
+echo ""
+echo "Run MehTunnel using:"
 echo "sudo mehtunnel"
+echo ""
