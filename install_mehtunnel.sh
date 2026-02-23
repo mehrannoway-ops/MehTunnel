@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # -----------------------------
-# MehTunnel Installer v2.0 (Clean Install)
+# MehTunnel Installer v1.0 (Stable)
 # -----------------------------
 
 REPO_USER="mehrannoway-ops"
@@ -23,21 +23,6 @@ ok() { echo -e "${CLR_GREEN}[+] $*${CLR_RESET}"; }
 # -----------------------------
 [[ "$EUID" -eq 0 ]] || err "Please run as root: sudo bash install_mehtunnel.sh"
 
-info "Cleaning previous MehTunnel installation..."
-sudo systemctl stop mehtunnel-ir 2>/dev/null || true
-sudo systemctl disable mehtunnel-ir 2>/dev/null || true
-sudo rm -f /etc/systemd/system/mehtunnel-ir.service 2>/dev/null || true
-
-sudo systemctl stop mehtunnel-eu 2>/dev/null || true
-sudo systemctl disable mehtunnel-eu 2>/dev/null || true
-sudo rm -f /etc/systemd/system/mehtunnel-eu.service 2>/dev/null || true
-
-sudo rm -rf "$INSTALL_DIR" 2>/dev/null || true
-sudo rm -f "$BIN" 2>/dev/null || true
-sudo systemctl daemon-reload
-sudo systemctl reset-failed
-
-# -----------------------------
 info "Updating package lists..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y >/dev/null 2>&1 || true
@@ -62,6 +47,7 @@ python3 "$PY_DST"
 EOF
 chmod +x "$BIN"
 
+# -----------------------------
 ok "Installation completed!"
 echo ""
 echo "Run MehTunnel using:"
