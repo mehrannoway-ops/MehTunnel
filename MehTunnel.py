@@ -1,67 +1,73 @@
 #!/usr/bin/env python3
-import os, sys, subprocess, time
-from pathlib import Path
+import os, sys, subprocess, getpass
 
 INSTALL_DIR = "/opt/mehtunnel"
-MEH_FILE = f"{INSTALL_DIR}/MehTunnel.py"
+SERVICE_DIR = "/etc/systemd/system"
 
-def read_line(prompt=None):
-    if prompt: print(prompt, end="", flush=True)
-    s = sys.stdin.readline()
-    return s.strip() if s else ""
-
-def create_service(name, cmd, desc):
-    service_path = f"/etc/systemd/system/{name}.service"
-    content = f"""[Unit]
-Description={desc}
-After=network.target
-
-[Service]
-Type=simple
-ExecStart={cmd}
-Restart=always
-RestartSec=3
-User=root
-
-[Install]
-WantedBy=multi-user.target
-"""
-    Path(service_path).write_text(content)
-    subprocess.run(["systemctl", "daemon-reload"])
-    subprocess.run(["systemctl", "enable", name])
-    subprocess.run(["systemctl", "start", name])
-
-def eu_mode():
-    iran_ip = read_line("EU -> Iran IP: ")
-    bridge = read_line("Bridge port [4444]: ") or "4444"
-    sync = read_line("Sync port [5555]: ") or "5555"
-    pool = 157
-    cmd = f"python3 {MEH_FILE} eu {iran_ip} {bridge} {sync} {pool}"
-    create_service("mehtunnel-eu", cmd, "MehTunnel EU Service")
-    print("✅ Service mehtunnel-eu created and started")
-    print("You can safely close the terminal. The tunnel will keep running.")
-
-def ir_mode():
-    bridge = read_line("IR -> Bridge port [4444]: ") or "4444"
-    sync = read_line("Sync port [5555]: ") or "5555"
-    manual_ports = read_line("Manual ports CSV (80,443,...): ") or ""
-    pool = 115
-    cmd = f"python3 {MEH_FILE} ir {bridge} {sync} {pool} {manual_ports}"
-    create_service("mehtunnel-ir", cmd, "MehTunnel IR Service")
-    print("✅ Service mehtunnel-ir created and started")
-    print("You can safely close the terminal. The tunnel will keep running.")
+def read_line(prompt):
+    return input(prompt).strip()
 
 def main():
     print("\n================================")
     print("        MehTunnel Manager")
     print("================================")
-    choice = read_line("Select mode (1=EU,2=IR): ")
-    if choice == "1":
-        eu_mode()
-    elif choice == "2":
-        ir_mode()
-    else:
-        print("Invalid selection"); sys.exit(1)
+    
+    mode = read_line("Select mode (1=EU,2=IR): ")
+    if mode not in ("1","2"):
+        print("Invalid selection."); sys.exit(1)
 
-if __name__ == "__main__":
+    if mode=="1":
+        iran_ip = read_line("EU IP: ")
+    else:
+        iran_ip = read_line("Iran IP: ")
+
+    bridge = read_line(f"Bridge port [4444]: ") or "4444"
+    sync = read_line(f"Sync port [5555]: ") or "5555"
+
+    manual_ports = ""
+    if mode=="2":
+        auto_sync = read_line("Auto-sync ports from EU? (y/n): ").lower() or "y"
+        if auto_sync=="n":
+            manual_ports = read_line("Manual ports CSV (80,443,...): ")
+
+    # Determine service name
+    svc_name = "mehtunnel-eu" if mode=="1" else "mehtunnel-ir"
+
+    # Build ExecStart command
+    args = ["python3", f"{INSTALL_DIR}/MehTunnel.py", "RUN"]
+    args.append("EU" if mode=="1" else "IR")
+    args.append(str(bridge))
+    args.append(str(sync))
+    args.append(str(115))  # default pool
+    if manual_ports: args.append(manual_ports)
+    cmdline = " ".join(args)
+
+    # Create systemd service
+    svc_file = f"{SERVICE_DIR}/{svc_name}.service"
+    with open(svc_file, "w") as f:
+        f.write(f"""[Unit]
+Description=MehTunnel {'EU' if mode=='1' else 'IR'} Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={cmdline}
+Restart=always
+User={getpass.getuser()}
+WorkingDirectory={INSTALL_DIR}
+StandardOutput=inherit
+StandardError=inherit
+
+[Install]
+WantedBy=multi-user.target
+""")
+    # Reload systemd & enable service
+    subprocess.run(["systemctl","daemon-reload"], check=True)
+    subprocess.run(["systemctl","enable",svc_name], check=True)
+    subprocess.run(["systemctl","start",svc_name], check=True)
+
+    print(f"\n✅ Service {svc_name} created and started")
+    print("You can safely close the terminal. The tunnel will keep running.\n")
+
+if __name__=="__main__":
     main()
