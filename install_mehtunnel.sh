@@ -1,28 +1,31 @@
 #!/usr/bin/env bash
-
 set -e
 
 PY_FILE="/opt/mehtunnel/MehTunnel.py"
+BIN_FILE="/usr/local/bin/mehtunnel"
 
 echo "[*] Updating package lists..."
-sudo apt update -y
+apt-get update -y
 
 echo "[*] Installing dependencies..."
-sudo apt install -y python3 python3-pip curl
+apt-get install -y python3 python3-pip curl
 
 echo "[*] Creating installation directory..."
-sudo mkdir -p /opt/mehtunnel
+mkdir -p /opt/mehtunnel
 
-echo "[*] Downloading MehTunnel.py..."
-sudo curl -Ls https://raw.githubusercontent.com/mehrannoway-ops/MehTunnel/main/MehTunnel.py -o $PY_FILE
-sudo chmod +x $PY_FILE
+echo "[*] Downloading MehTunnel..."
+curl -Ls https://raw.githubusercontent.com/mehrannoway-ops/MehTunnel/main/MehTunnel.py -o $PY_FILE
+
+echo "[*] Setting execute permission..."
+chmod +x $PY_FILE
 
 echo "[*] Creating launcher command: mehtunnel"
-sudo bash -c 'cat > /usr/local/bin/mehtunnel <<EOF
+cat > $BIN_FILE <<EOF
 #!/usr/bin/env bash
-python3 -u /opt/mehtunnel/MehTunnel.py --interactive
-EOF'
-sudo chmod +x /usr/local/bin/mehtunnel
+python3 "/opt/mehtunnel/MehTunnel.py" "\$@"
+EOF
+
+chmod +x $BIN_FILE
 
 echo "[+] Installation completed!"
 echo ""
