@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os, sys, time, socket, struct, threading, subprocess, re, resource
 from queue import Queue, Empty
+from typing import Optional
 
 # --------- Tunables ----------
 DIAL_TIMEOUT = 5
@@ -18,11 +19,13 @@ def auto_pool_size(role: str = "ir") -> int:
             return env_pool
     except Exception:
         pass
+
     try:
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         nofile = soft if soft and soft > 0 else 1024
     except Exception:
         nofile = 1024
+
     mem_mb = 0
     try:
         with open("/proc/meminfo", "r") as f:
@@ -33,6 +36,7 @@ def auto_pool_size(role: str = "ir") -> int:
                     break
     except Exception:
         mem_mb = 0
+
     reserve = 500
     fd_budget = max(0, nofile - reserve)
     frac = 0.22 if role.lower().startswith("ir") else 0.30
@@ -44,6 +48,23 @@ def auto_pool_size(role: str = "ir") -> int:
     if pool > 2000:
         pool = 2000
     return pool
+
+def is_socket_alive(s: socket.socket) -> bool:
+    try:
+        s.setblocking(False)
+        try:
+            data = s.recv(1, socket.MSG_PEEK)
+            if data == b"":
+                return False
+        except BlockingIOError:
+            return True
+        except Exception:
+            return True
+        finally:
+            s.setblocking(True)
+        return True
+    except Exception:
+        return False
 
 def tune_tcp(sock: socket.socket):
     try: sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -71,7 +92,7 @@ def dial_tcp(host, port):
     s.settimeout(None)
     return s
 
-def recv_exact(sock: socket.socket, n: int):
+def recv_exact(sock: socket.socket, n: int) -> Optional[bytes]:
     data = bytearray()
     while len(data) < n:
         chunk = sock.recv(n - len(data))
@@ -89,9 +110,9 @@ def pipe(a: socket.socket, b: socket.socket):
             b.sendall(memoryview(buf)[:n])
     except Exception: pass
     finally:
-        try: a.close()
+        try: a.shutdown(socket.SHUT_RD)
         except Exception: pass
-        try: b.close()
+        try: b.shutdown(socket.SHUT_WR)
         except Exception: pass
 
 def bridge(a: socket.socket, b: socket.socket):
@@ -99,18 +120,44 @@ def bridge(a: socket.socket, b: socket.socket):
     t2 = threading.Thread(target=pipe, args=(b,a), daemon=True)
     t1.start(); t2.start()
     t1.join(); t2.join()
+    try: a.close()
+    except Exception: pass
+    try: b.close()
+    except Exception: pass
 
 # --------- EU Mode ----------
+_port_re = re.compile(r":(\d+)$")
+def get_listen_ports(exclude_bridge, exclude_sync):
+    try:
+        out = subprocess.check_output(["bash","-lc","ss -lntp | awk '{print $4}'"], stderr=subprocess.DEVNULL).decode()
+    except Exception:
+        return []
+    ports = set()
+    for ln in out.splitlines():
+        ln = ln.strip()
+        if not ln: continue
+        m = _port_re.search(ln)
+        if not m: continue
+        p = int(m.group(1))
+        if p in (exclude_bridge, exclude_sync): continue
+        if 1 <= p <= 65535:
+            ports.add(p)
+    return sorted(ports)
+
 def eu_mode(iran_ip, bridge_port, sync_port, pool_size):
     def port_sync_loop():
         while True:
             try:
                 c = dial_tcp(iran_ip, sync_port)
             except Exception:
-                time.sleep(SYNC_INTERVAL)
-                continue
+                time.sleep(SYNC_INTERVAL); continue
             try:
                 while True:
+                    ports = get_listen_ports(bridge_port, sync_port)[:255]
+                    payload = bytes([len(ports)]) + b"".join(struct.pack("!H", p) for p in ports)
+                    c.settimeout(2)
+                    c.sendall(payload)
+                    c.settimeout(None)
                     time.sleep(SYNC_INTERVAL)
             except Exception:
                 try: c.close()
@@ -122,7 +169,11 @@ def eu_mode(iran_ip, bridge_port, sync_port, pool_size):
         while True:
             try:
                 conn = dial_tcp(iran_ip, bridge_port)
-                conn.close()
+                hdr = recv_exact(conn, 2)
+                if not hdr: conn.close(); continue
+                (target_port,) = struct.unpack("!H", hdr)
+                local = dial_tcp("127.0.0.1", target_port)
+                bridge(conn, local)
                 delay = 0.2
             except Exception:
                 time.sleep(delay)
@@ -140,12 +191,125 @@ def ir_mode(bridge_port, sync_port, pool_size, auto_sync, manual_ports_csv):
     pool = Queue(maxsize=pool_size*2)
     active = {}
     active_lock = threading.Lock()
-    def open_port(p:int):
-        print(f"[IR] Port Active: {p}")
-    for p in manual_ports_csv.split(","):
+
+    def accept_bridge():
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("0.0.0.0", bridge_port))
+        srv.listen(16384)
+        print(f"[IR] Bridge listening on {bridge_port}")
+        while True:
+            try:
+                c,_ = srv.accept()
+            except OSError:
+                time.sleep(0.2); continue
+            tune_tcp(c)
+            try: pool.put(c, block=False)
+            except Exception:
+                try: c.close()
+                except Exception: pass
+
+    def handle_user(user_sock, target_port):
+        tune_tcp(user_sock)
+        deadline = time.time() + POOL_WAIT
+        europe = None
+        while time.time() < deadline:
+            try:
+                cand = pool.get(timeout=max(0.1, deadline-time.time()))
+            except Empty:
+                break
+            if is_socket_alive(cand):
+                europe = cand
+                break
+            try: cand.close()
+            except Exception: pass
+        if europe is None:
+            try: user_sock.close()
+            except Exception: pass
+            return
         try:
-            open_port(int(p.strip()))
-        except Exception: pass
+            europe.settimeout(2)
+            europe.sendall(struct.pack("!H", target_port))
+            europe.settimeout(None)
+        except Exception:
+            try: user_sock.close()
+            except Exception: pass
+            try: europe.close()
+            except Exception: pass
+            return
+        bridge(user_sock, europe)
+
+    def open_port(p:int):
+        with active_lock:
+            if p in active: return
+            active[p]=True
+        try:
+            srv=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+            srv.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+            srv.bind(("0.0.0.0",p))
+            srv.listen(16384)
+        except Exception as e:
+            with active_lock:
+                active.pop(p,None)
+            print(f"[IR] Cannot open port {p}: {e}")
+            return
+        print(f"[IR] Port Active: {p}")
+        def accept_users():
+            while True:
+                try:
+                    u,_=srv.accept()
+                except OSError:
+                    time.sleep(0.2)
+                    continue
+                try: threading.Thread(target=handle_user,args=(u,p),daemon=True).start()
+                except Exception:
+                    try: u.close()
+                    except Exception: pass
+        threading.Thread(target=accept_users,daemon=True).start()
+
+    def sync_listener():
+        srv = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+        srv.bind(("0.0.0.0",sync_port))
+        srv.listen(1024)
+        print(f"[IR] Sync listening on {sync_port} (AutoSync)")
+        while True:
+            try: c,_=srv.accept()
+            except OSError:
+                time.sleep(0.2); continue
+            def handle_sync(conn):
+                try:
+                    while True:
+                        h=recv_exact(conn,1)
+                        if not h: break
+                        count = h[0]
+                        for _ in range(count):
+                            pd = recv_exact(conn,2)
+                            if not pd: return
+                            (p,) = struct.unpack("!H", pd)
+                            open_port(p)
+                except Exception:
+                    pass
+                finally:
+                    try: conn.close()
+                    except Exception: pass
+            threading.Thread(target=handle_sync,args=(c,),daemon=True).start()
+
+    threading.Thread(target=accept_bridge,daemon=True).start()
+
+    if auto_sync:
+        threading.Thread(target=sync_listener,daemon=True).start()
+    else:
+        ports=[]
+        if manual_ports_csv.strip():
+            for part in manual_ports_csv.split(","):
+                try:
+                    p=int(part.strip())
+                    if 1<=p<=65535: ports.append(p)
+                except Exception: pass
+        for p in ports: open_port(p)
+        print("[IR] Manual ports opened.")
+
     print(f"[IR] Running | bridge={bridge_port} sync={sync_port} pool={pool_size} autoSync={auto_sync}")
     while True:
         time.sleep(3600)
@@ -157,32 +321,29 @@ def read_line(prompt=None):
     return s.strip() if s else ""
 
 def main():
-    print("\n================================")
-    print("        MehTunnel Manager")
-    print("================================")
     choice = read_line("Select mode (1=EU,2=IR): ")
     if choice not in ("1","2"):
         print("Invalid mode selection."); sys.exit(1)
     if choice=="1":
-        iran_ip=read_line("Iran IP (connect EU to Iran): ")
+        iran_ip=read_line("Iran IP: ")
         bridge=int(read_line("Bridge port [4444]: ") or "4444")
         sync=int(read_line("Sync port [5555]: ") or "5555")
         pool=auto_pool_size("eu")
         print(f"[AUTO] role=EU pool={pool} (override: MEHTUNNEL_POOL)")
-        eu_mode(iran_ip, bridge, sync, pool)
+        eu_mode(iran_ip,bridge,sync,pool)
     else:
-        bridge=int(read_line("IR -> Bridge port [4444]: ") or "4444")
+        bridge=int(read_line("Bridge port [4444]: ") or "4444")
         sync=int(read_line("Sync port [5555]: ") or "5555")
         yn=read_line("Auto-sync ports from EU? (y/n): ").lower() or "y"
         if yn=="y":
             pool=auto_pool_size("ir")
             print(f"[AUTO] role=IR pool={pool} (override: MEHTUNNEL_POOL)")
-            ir_mode(bridge, sync, pool, auto_sync=True, manual_ports_csv="")
+            ir_mode(bridge,sync,pool,auto_sync=True,manual_ports_csv="")
         else:
             ports=read_line("Manual ports CSV (80,443,...): ")
             pool=auto_pool_size("ir")
             print(f"[AUTO] role=IR pool={pool} (override: MEHTUNNEL_POOL)")
-            ir_mode(bridge, sync, pool, auto_sync=False, manual_ports_csv=ports)
+            ir_mode(bridge,sync,pool,auto_sync=False,manual_ports_csv=ports)
 
 if __name__=="__main__":
     main()
